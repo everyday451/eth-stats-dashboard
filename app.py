@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import pytz
-from polygon import RESTClient
 
 st.set_page_config(page_title="ETH Stats - Free Edgeful", layout="wide", page_icon="📊")
 st.title("📊 Free ETH Stats Dashboard (Alaska Time) - Like Edgeful")
@@ -12,60 +11,33 @@ st.caption("Exact replica of your Pine Script • PDH/PDL/VPOC/VAH/VAL/MID • 1
 # ====================== SIDEBAR ======================
 with st.sidebar:
     st.header("Settings")
-    api_key = st.text_input("Polygon API Key (free)", value="", type="password")
-    symbol = st.text_input("Futures Symbol", value="ESH26")
     lookback = st.slider("Lookback Sessions (0 = All)", 0, 200, 0)
     tolerance_ticks = st.slider("Touch Tolerance (ticks)", 1, 50, 12)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Start Date", datetime.today() - timedelta(days=30))
-    with col2:
-        end_date = st.date_input("End Date", datetime.today())
-    
-    source = st.radio("Data Source", ["Upload CSV", "Live Polygon Fetch"])
-    fetch_button = st.button("🚀 Fetch / Refresh Data")
+    source = st.radio("Data Source", ["Upload CSV"])
+    uploaded = st.file_uploader("Upload ES minute CSV", type=["csv"])
 
 # ====================== DATA LOADING ======================
 df = pd.DataFrame()
 
-@st.cache_data(ttl=3600)
-def fetch_polygon_data(api_key, symbol, start, end):
-    if not api_key:
-        st.error("Enter your Polygon API key in the sidebar")
-        return pd.DataFrame()
-    try:
-        client = RESTClient(api_key)
-        aggs = list(client.get_aggs(symbol, 1, "minute", from_=start, to=end, limit=50000))
-        if not aggs:
-            st.error("No data returned. Try a shorter range.")
-            return pd.DataFrame()
-        df = pd.DataFrame(aggs)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
-        return df[['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']]
-    except Exception as e:
-        st.error(f"Polygon error: {str(e)[:150]}")
-        return pd.DataFrame()
+if uploaded:
+    df = pd.read_csv(uploaded)
+    
+    # AUTO-DETECT & FIX COLUMN NAMES (works with your CSV)
+    possible_time_cols = ['timestamp', 'date', 'time', 'datetime', 'Time', 'Date', 'Datetime']
+    for col in possible_time_cols:
+        if col in df.columns:
+            df = df.rename(columns={col: 'timestamp'})
+            st.success(f"✅ Auto-detected date column: '{col}'")
+            break
+    
+    if 'Latest' in df.columns:
+        df = df.rename(columns={'Latest': 'Close'})
+    
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
 
-if source == "Live Polygon Fetch" and fetch_button:
-    df = fetch_polygon_data(api_key, symbol, start_date, end_date)
-elif source == "Upload CSV":
-    uploaded = st.file_uploader("Upload ES minute CSV", type=["csv"])
-    if uploaded:
-        df = pd.read_csv(uploaded)
-        # Auto-detect timestamp column (fixes your error permanently)
-        possible = ['timestamp', 'date', 'time', 'datetime', 'Date', 'Time', 'Datetime']
-        for name in possible:
-            if name in df.columns:
-                df = df.rename(columns={name: 'timestamp'})
-                st.success(f"✅ Auto-detected date column: '{name}'")
-                break
-        if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-
-# ====================== PROCESSING (your logic) ======================
-if not df.empty and 'timestamp' in df.columns:
+# ====================== PROCESSING ======================
+if not df.empty and 'timestamp' in df.columns and 'Close' in df.columns:
     tz_ak = pytz.timezone("America/Anchorage")
     df['AK_Time'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(tz_ak)
     df['Date'] = df['AK_Time'].dt.date
@@ -74,12 +46,10 @@ if not df.empty and 'timestamp' in df.columns:
     df['inRTH'] = df['Time'].apply(lambda t: pd.Timestamp('05:30').time() <= t <= pd.Timestamp('13:00').time())
     df['newETH'] = (df['inRTH'].shift(1) == True) & (df['inRTH'] == False)
 
-    # Simple level calculation (PDH/PDL etc.)
     results = []
     for date, group in df.groupby('Date'):
         rth = group[group['inRTH']]
-        if rth.empty:
-            continue
+        if rth.empty: continue
         pdh = rth['High'].max()
         pdl = rth['Low'].min()
         vpoc = rth['Close'].median()
@@ -102,11 +72,10 @@ if not df.empty and 'timestamp' in df.columns:
     stats_df = pd.DataFrame(results)
     if not stats_df.empty:
         used = stats_df.tail(lookback) if lookback > 0 else stats_df
-        total = len(used)
         table = pd.DataFrame({
             "Level": ["Sessions Tracked", "PDH", "PDL", "VPOC", "VAH", "VAL", "MID"],
             "Overall % Touch (ETH)": [
-                total,
+                len(used),
                 used['Touch_PDH'].mean() * 100,
                 used['Touch_PDL'].mean() * 100,
                 used['Touch_VPOC'].mean() * 100,
@@ -117,7 +86,7 @@ if not df.empty and 'timestamp' in df.columns:
         })
         st.dataframe(table.style.format({"Overall % Touch (ETH)": "{:.2f}%"}), use_container_width=True)
 
-        # Chart
+        # Chart with locked lines
         fig = go.Figure()
         fig.add_trace(go.Candlestick(x=df['AK_Time'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']))
         last = stats_df.iloc[-1]
@@ -131,5 +100,4 @@ if not df.empty and 'timestamp' in df.columns:
         st.plotly_chart(fig, use_container_width=True)
 
 else:
-    st.info("Upload a CSV or enter your Polygon key and click Fetch")
-# [The rest of your original code for table and chart remains exactly the same as before]
+    st.info("Upload your CSV file above")
