@@ -13,7 +13,6 @@ with st.sidebar:
     st.header("Settings")
     lookback = st.slider("Lookback Sessions (0 = All)", 0, 200, 0)
     tolerance_ticks = st.slider("Touch Tolerance (ticks)", 1, 50, 12)
-    source = st.radio("Data Source", ["Upload CSV"])
     uploaded = st.file_uploader("Upload ES minute CSV", type=["csv"])
 
 # ====================== DATA LOADING ======================
@@ -22,14 +21,15 @@ df = pd.DataFrame()
 if uploaded:
     df = pd.read_csv(uploaded)
     
-    # AUTO-DETECT & FIX COLUMN NAMES (works with your CSV)
-    possible_time_cols = ['timestamp', 'date', 'time', 'datetime', 'Time', 'Date', 'Datetime']
-    for col in possible_time_cols:
+    # AUTO-DETECT TIME COLUMN (your file uses "Time")
+    possible = ['timestamp', 'date', 'time', 'datetime', 'Time', 'Date', 'Datetime']
+    for col in possible:
         if col in df.columns:
             df = df.rename(columns={col: 'timestamp'})
             st.success(f"✅ Auto-detected date column: '{col}'")
             break
     
+    # Rename Latest to Close (your file uses "Latest")
     if 'Latest' in df.columns:
         df = df.rename(columns={'Latest': 'Close'})
     
@@ -43,6 +43,7 @@ if not df.empty and 'timestamp' in df.columns and 'Close' in df.columns:
     df['Date'] = df['AK_Time'].dt.date
     df['Time'] = df['AK_Time'].dt.time
 
+    # Session detection
     df['inRTH'] = df['Time'].apply(lambda t: pd.Timestamp('05:30').time() <= t <= pd.Timestamp('13:00').time())
     df['newETH'] = (df['inRTH'].shift(1) == True) & (df['inRTH'] == False)
 
