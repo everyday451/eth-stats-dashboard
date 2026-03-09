@@ -27,27 +27,21 @@ with st.sidebar:
 @st.cache_data(ttl=3600)
 def fetch_polygon_data(api_key, symbol, start, end):
     if not api_key:
-        st.error("Enter your Polygon API key in sidebar")
+        st.error("Enter your Polygon API key in the sidebar")
         return pd.DataFrame()
-    client = RESTClient(api_key)
-    aggs = list(client.get_aggs(symbol, 1, "minute", from_=start, to=end, limit=50000))
-    df = pd.DataFrame(aggs)
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
-    return df[['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']]
-
-if source == "Live Polygon Fetch" and fetch_button:
-    df = fetch_polygon_data(api_key, symbol, start_date, end_date)
-elif source == "Upload CSV":
-    uploaded = st.file_uploader("Upload ES minute CSV (columns: timestamp,Open,High,Low,Close,Volume)", type=["csv"])
-    if uploaded:
-        df = pd.read_csv(uploaded)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-    else:
-        df = pd.DataFrame()
-else:
-    df = pd.DataFrame()
-
+    try:
+        client = RESTClient(api_key)
+        aggs = list(client.get_aggs(symbol, 1, "minute", from_=start, to=end, limit=50000))
+        if not aggs:
+            st.error("No data returned from Polygon. Try a shorter date range (max 1 year on free tier) or a valid futures symbol like ESH26.")
+            return pd.DataFrame()
+        df = pd.DataFrame(aggs)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
+        return df[['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']]
+    except Exception as e:
+        st.error(f"Polygon error: {str(e)[:200]}... Try a shorter date range or check your API key.")
+        return pd.DataFrame()
 # ====================== PROCESSING (exact Pine logic) ======================
 if not df.empty:
     tz_ak = pytz.timezone("America/Anchorage")
