@@ -13,7 +13,7 @@ with st.sidebar:
     st.header("Settings")
     lookback = st.slider("Lookback Sessions (0 = All)", 0, 200, 0)
     tolerance_ticks = st.slider("Touch Tolerance (ticks)", 1, 50, 12)
-    uploaded = st.file_uploader("Upload your ES minute CSV", type=["csv"])
+    uploaded = st.file_uploader("Upload ES minute CSV", type=["csv"])
 
 # ====================== DATA LOADING ======================
 df = pd.DataFrame()
@@ -21,7 +21,7 @@ df = pd.DataFrame()
 if uploaded:
     df = pd.read_csv(uploaded)
     
-    # AUTO-DETECT & FIX COLUMNS (works with your exact file)
+    # AUTO-DETECT & FIX COLUMNS (your file uses "Time" and "Latest")
     possible = ['timestamp', 'date', 'time', 'datetime', 'Time', 'Date']
     for col in possible:
         if col in df.columns:
@@ -32,17 +32,22 @@ if uploaded:
     if 'Latest' in df.columns:
         df = df.rename(columns={'Latest': 'Close'})
     
-    if 'timestamp' in df.columns:
-        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-        df['time_only'] = df['timestamp'].dt.time   # ← This fixes the error
+    # Safe datetime conversion (drops bad rows)
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    df = df.dropna(subset=['timestamp'])  # removes any bad dates
 
 # ====================== PROCESSING ======================
 if not df.empty and 'timestamp' in df.columns and 'Close' in df.columns:
     tz_ak = pytz.timezone("America/Anchorage")
     df['AK_Time'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(tz_ak)
     df['Date'] = df['AK_Time'].dt.date
+    df['hour'] = df['AK_Time'].dt.hour
+    df['minute'] = df['AK_Time'].dt.minute
 
-    df['inRTH'] = df['time_only'].apply(lambda t: pd.Timestamp('05:30').time() <= t <= pd.Timestamp('13:00').time())
+    # Vectorized RTH detection (no lambda = no error)
+    df['inRTH'] = ((df['hour'] > 5) | ((df['hour'] == 5) & (df['minute'] >= 30))) & \
+                  ((df['hour'] < 13) | ((df['hour'] == 13) & (df['minute'] == 0)))
+
     df['newETH'] = (df['inRTH'].shift(1) == True) & (df['inRTH'] == False)
 
     results = []
