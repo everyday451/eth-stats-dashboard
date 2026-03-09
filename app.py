@@ -13,7 +13,7 @@ with st.sidebar:
     st.header("Settings")
     lookback = st.slider("Lookback Sessions (0 = All)", 0, 200, 0)
     tolerance_ticks = st.slider("Touch Tolerance (ticks)", 1, 50, 12)
-    uploaded = st.file_uploader("Upload ES minute CSV", type=["csv"])
+    uploaded = st.file_uploader("Upload your ES minute CSV", type=["csv"])
 
 # ====================== DATA LOADING ======================
 df = pd.DataFrame()
@@ -21,30 +21,28 @@ df = pd.DataFrame()
 if uploaded:
     df = pd.read_csv(uploaded)
     
-    # AUTO-DETECT TIME COLUMN (your file uses "Time")
-    possible = ['timestamp', 'date', 'time', 'datetime', 'Time', 'Date', 'Datetime']
+    # AUTO-DETECT & FIX COLUMNS (works with your exact file)
+    possible = ['timestamp', 'date', 'time', 'datetime', 'Time', 'Date']
     for col in possible:
         if col in df.columns:
             df = df.rename(columns={col: 'timestamp'})
             st.success(f"✅ Auto-detected date column: '{col}'")
             break
     
-    # Rename Latest to Close (your file uses "Latest")
     if 'Latest' in df.columns:
         df = df.rename(columns={'Latest': 'Close'})
     
     if 'timestamp' in df.columns:
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        df['time_only'] = df['timestamp'].dt.time   # ← This fixes the error
 
 # ====================== PROCESSING ======================
 if not df.empty and 'timestamp' in df.columns and 'Close' in df.columns:
     tz_ak = pytz.timezone("America/Anchorage")
     df['AK_Time'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(tz_ak)
     df['Date'] = df['AK_Time'].dt.date
-    df['Time'] = df['AK_Time'].dt.time
 
-    # Session detection
-    df['inRTH'] = df['Time'].apply(lambda t: pd.Timestamp('05:30').time() <= t <= pd.Timestamp('13:00').time())
+    df['inRTH'] = df['time_only'].apply(lambda t: pd.Timestamp('05:30').time() <= t <= pd.Timestamp('13:00').time())
     df['newETH'] = (df['inRTH'].shift(1) == True) & (df['inRTH'] == False)
 
     results = []
